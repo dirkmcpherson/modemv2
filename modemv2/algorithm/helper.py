@@ -865,24 +865,29 @@ class ReplayBuffer(object):
         return obs.float()
 
     def sample(self):
+        # --- PER sampling ---
         if not self.full:
             probs = self._priorities[: self.idx] ** self.cfg.per_alpha
         else:
             probs = self._priorities[:] ** self.cfg.per_alpha
         probs /= probs.sum()
+
         total = len(probs)
         idxs = torch.from_numpy(
-            np.random.choice(
-                total, self.cfg.batch_size, p=probs.cpu().numpy(), replace=True
-            )
+            np.random.choice(total, self.cfg.batch_size, p=probs.cpu().numpy(), replace=True)
         ).to(self.device)
+
         weights = (total * probs[idxs]) ** (-self.cfg.per_beta)
         weights /= weights.max()
+
+        # --- current obs (t=0) ---
         obs = (
             self._get_obs(self._obs, idxs)
             if self.cfg.frame_stack > 1
             else self._obs[idxs].cuda(non_blocking=True)
         )
+
+        # --- allocate rollout tensors ---
         next_obs_shape = (self.cfg.obs_shape[0], self.cfg.obs_shape[1], *self._last_obs.shape[-2:])
         next_obs = torch.empty(
             (self.cfg.horizon + 1, self.cfg.batch_size, *next_obs_shape),
@@ -899,12 +904,15 @@ class ReplayBuffer(object):
             dtype=torch.float32,
             device=self.device,
         )
+
         state = self._state[idxs, : self._state_dim]
         next_state = torch.empty(
             (self.cfg.horizon + 1, self.cfg.batch_size, *state.shape[1:]),
             dtype=state.dtype,
             device=state.device,
         )
+
+        # --- rollout slices ---
         for t in range(self.cfg.horizon + 1):
             _idxs = idxs + t
             next_obs[t] = (
@@ -916,24 +924,50 @@ class ReplayBuffer(object):
             reward[t] = self._reward[_idxs]
             next_state[t] = self._state[_idxs + 1, : self._state_dim]
 
+        # --- episode boundary fixups for terminal transitions ---
         mask = (_idxs + 1) % self.cfg.episode_length == 0
-        next_obs[-1, mask] = (
+
+        # Fill next_obs[-1] at episode ends with stored last_obs
+        # NOTE: self._last_obs is very often float32; next_obs/obs may be uint8.
+        src = (
             self._last_obs[_idxs[mask] // self.cfg.episode_length]
             .to(next_obs.device, non_blocking=True)
-            .float()
         )
+
+        # Make src match destination dtype (and scale if needed)
+        if src.dtype != next_obs.dtype:
+            if next_obs.dtype == torch.uint8 and src.is_floating_point():
+                # If src is normalized [0,1], rescale to [0,255] before uint8 cast.
+                if src.numel() > 0 and float(src.max().item()) <= 1.5:
+                    src = src * 255.0
+                src = src.clamp(0, 255).to(torch.uint8)
+            else:
+                src = src.to(next_obs.dtype)
+
+        next_obs[-1, mask] = src
+
+        # Fill next_state[-1] similarly
         state = state.cuda(non_blocking=True)
         next_state[-1, mask] = (
             self._last_state[_idxs[mask] // self.cfg.episode_length, : self._state_dim]
-            .to(next_state.device)
+            .to(next_state.device, non_blocking=True)
             .float()
         )
+
+        # --- finalize device placement / shapes expected downstream ---
         next_state = next_state.cuda(non_blocking=True)
         next_obs = next_obs.cuda(non_blocking=True)
         action = action.cuda(non_blocking=True)
         reward = reward.unsqueeze(2).cuda(non_blocking=True)
         idxs = idxs.cuda(non_blocking=True)
         weights = weights.cuda(non_blocking=True)
+
+        # ---- convert pixel obs to float for augmentation / model ----
+        # storage is uint8, but the model/aug expect float
+        if obs.dtype == torch.uint8:
+            obs = obs.float().div_(255.0)
+        if next_obs.dtype == torch.uint8:
+            next_obs = next_obs.float().div_(255.0)
 
         return obs, next_obs, action, reward, state, next_state, idxs, weights
 
