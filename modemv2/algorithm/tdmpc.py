@@ -219,8 +219,9 @@ class TDMPC:
     @torch.no_grad()
     def compute_elite_actions(self, actions, value, num_elites):
         assert(len(value.shape)==1)
+        k = min(num_elites, value.shape[0])
         elite_idxs = torch.topk(
-            value, num_elites, dim=0
+            value, k, dim=0
         ).indices
 
         if len(actions.shape)== 2:

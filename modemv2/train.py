@@ -48,8 +48,15 @@ def evaluate(env, agent, cfg, step, env_step, video, traj_plot=None, q_plot=None
     cart_vels = []
     cart_accels = []
     cart_jerks = []
-    velocimeter_id = env.unwrapped.sim.model.sensor_adr[env.unwrapped.sim.model.sensor_name2id('palm_velocimeter')]
-    accelerometer_id = env.unwrapped.sim.model.sensor_adr[env.unwrapped.sim.model.sensor_name2id('palm_accelerometer')]
+    velocimeter_id = -1
+    accelerometer_id = -1
+    if hasattr(env.unwrapped, 'sim'):
+        try:
+            velocimeter_id = env.unwrapped.sim.model.sensor_adr[env.unwrapped.sim.model.sensor_name2id('palm_velocimeter')]
+            accelerometer_id = env.unwrapped.sim.model.sensor_adr[env.unwrapped.sim.model.sensor_name2id('palm_accelerometer')]
+        except Exception:
+            pass
+    
     contact_forces = []
 
     ep_q_stats = []
@@ -57,7 +64,8 @@ def evaluate(env, agent, cfg, step, env_step, video, traj_plot=None, q_plot=None
     ep_count = 0
     while ep_count < cfg.eval_episodes:
         obs, done, ep_reward, t = env.reset(), False, 0, 0
-        episode_start_states.append(env.unwrapped.get_env_state())
+        if hasattr(env.unwrapped, 'get_env_state'):
+             episode_start_states.append(env.unwrapped.get_env_state())
         states = [torch.tensor(env.state, dtype=torch.float32, device=agent.device)]
         obs_unstacked = [obs[0,-4:-1]]
         actions = []
@@ -78,26 +86,27 @@ def evaluate(env, agent, cfg, step, env_step, video, traj_plot=None, q_plot=None
             
             obs, reward, done, info = env.step(action.cpu().numpy())
             success_count += float(info["success"])
-            joint_configs.append(env.unwrapped.sim.data.qpos.copy())
-            joint_vels.append(env.unwrapped.sim.data.qvel.copy())
-            joint_accels.append(env.unwrapped.sim.data.qacc.copy())
-            joint_forces.append(env.unwrapped.sim.data.qfrc_actuator.copy())
-            cart_pos.append(env.unwrapped.sim.data.site_xpos[env.unwrapped.grasp_sid].copy())
-            cart_vels.append(env.unwrapped.sim.data.sensordata[velocimeter_id:velocimeter_id+3])
-            cart_accels.append(env.unwrapped.sim.data.sensordata[accelerometer_id:accelerometer_id+3])
-
-            if t > 0:
-                joint_jerks.append(joint_accels[-1]-joint_accels[-2])
-                cart_jerks.append(cart_accels[-1]-cart_accels[-2])
-
-            if cfg.task.startswith('franka-FrankaBinReorient'):
-                contact_force = (env.unwrapped.sim.data.get_sensor('touch_sensor_tf')+
-                                 env.unwrapped.sim.data.get_sensor('touch_sensor_ff')+
-                                 env.unwrapped.sim.data.get_sensor('touch_sensor_pf'))
-            else:
-                contact_force = env.unwrapped.sim.data.get_sensor('touch_sensor_left')+env.unwrapped.sim.data.get_sensor('touch_sensor_right')
-            if contact_force > 1e-5:
-                contact_forces.append(contact_force)
+            if hasattr(env.unwrapped, 'sim') and velocimeter_id != -1:
+                joint_configs.append(env.unwrapped.sim.data.qpos.copy())
+                joint_vels.append(env.unwrapped.sim.data.qvel.copy())
+                joint_accels.append(env.unwrapped.sim.data.qacc.copy())
+                joint_forces.append(env.unwrapped.sim.data.qfrc_actuator.copy())
+                cart_pos.append(env.unwrapped.sim.data.site_xpos[env.unwrapped.grasp_sid].copy())
+                cart_vels.append(env.unwrapped.sim.data.sensordata[velocimeter_id:velocimeter_id+3])
+                cart_accels.append(env.unwrapped.sim.data.sensordata[accelerometer_id:accelerometer_id+3])
+    
+                if t > 0:
+                    joint_jerks.append(joint_accels[-1]-joint_accels[-2])
+                    cart_jerks.append(cart_accels[-1]-cart_accels[-2])
+    
+                if cfg.task.startswith('franka-FrankaBinReorient'):
+                    contact_force = (env.unwrapped.sim.data.get_sensor('touch_sensor_tf')+
+                                     env.unwrapped.sim.data.get_sensor('touch_sensor_ff')+
+                                     env.unwrapped.sim.data.get_sensor('touch_sensor_pf'))
+                else:
+                    contact_force = env.unwrapped.sim.data.get_sensor('touch_sensor_left')+env.unwrapped.sim.data.get_sensor('touch_sensor_right')
+                if contact_force > 1e-5:
+                    contact_forces.append(contact_force)
 
             states.append(torch.tensor(env.state, dtype=torch.float32, device=agent.device))
             obs_unstacked.append(obs[0,-4:-1])
@@ -242,7 +251,7 @@ def train(cfg: dict):
     assert(start_step == 0 or bc_start_step is None)
     if model_fp is not None:
         print('Loading agent '+str(model_fp))
-        agent_data = torch.load(model_fp)
+        agent_data = torch.load(model_fp, weights_only=False)
         if isinstance(agent_data, dict):
             agent.load(agent_data)
         else:
@@ -322,6 +331,7 @@ def train(cfg: dict):
     start_time = time.time()
     start_step = start_step // cfg.action_repeat
     episode_idx = start_step // cfg.episode_length
+    first_debug_print = True
     for step in range(start_step, start_step+cfg.train_steps + cfg.episode_length, cfg.episode_length):
 
         # Collect trajectory
@@ -343,6 +353,22 @@ def train(cfg: dict):
             ep_start = time.time()
             while not episode.done:
                 action, q_stats = agent.plan(obs, env.state, step=step, t=t) 
+                
+                if first_debug_print:
+                    print("\n=== DEBUG FIRST TRAINING STEP ===")
+                    print(f"Obs (Image) - Shape: {obs.shape}, Type: {type(obs)}")
+                    if hasattr(obs, 'min'):
+                        print(f"  Range: [{obs.min()}, {obs.max()}], Mean: {obs.mean()}")
+                    
+                    print(f"State - Shape: {env.state.shape}, Type: {type(env.state)}")
+                    if hasattr(env.state, 'min'):
+                        print(f"  Range: [{env.state.min()}, {env.state.max()}], Mean: {env.state.mean()}")
+                        
+                    print(f"Action - Shape: {action.shape}, Type: {type(action)}")
+                    if hasattr(action, 'min'):
+                        print(f"  Range: [{action.min()}, {action.max()}], Mean: {action.float().mean()}")
+                    print("=================================\n")
+                    first_debug_print = False 
                 if cfg.save_episodes:
                     trace.append_datums(group_key='Trial0', dataset_key_val=env.get_trace_dict(action.cpu().numpy()))
                 obs, reward, done, info = env.step(action.cpu().numpy())

@@ -22,6 +22,14 @@ class ManiSkillEnvAdapter:
         )
 
         self.action_space = self.env.action_space
+        # Create observation space matching the expected output shape (B, C, H, W)
+        self.observation_space = gym.spaces.Box(
+            low=0, high=255, 
+            shape=(self.B, self.C, self.H, self.W), 
+            dtype=np.uint8
+        )
+        self.reward_range = (-float("inf"), float("inf"))
+        self.metadata = {"render.modes": []}
         self.state_dim = int(getattr(cfg, "state_dim", 0))  # optional, for sanity
         self.state = None
         self.cfg = cfg
@@ -31,11 +39,19 @@ class ManiSkillEnvAdapter:
     def close(self):
         self.env.close()
 
+    @property
+    def unwrapped(self):
+        return self.env.unwrapped
+
+    def base_env(self):
+        return self
+
     def reset(self, seed=0):
         obs, _ = self.env.reset(seed=seed)
 
         # Always compute outputs
         img = self._extract_obs_image(obs)   # should be (B,C,H,W) uint8
+        self.last_img = img  # Cache for render
         self.state = self._extract_state(obs)  # should be (state_dim,) float32
 
         if self.debug_once:
@@ -85,13 +101,28 @@ class ManiSkillEnvAdapter:
         if action_np.ndim == 1:
             action_np = np.repeat(action_np[None, :], self.B, axis=0)
 
+        self.last_eef_cmd = action_np # Store for logger
+
         obs, reward, terminated, truncated, info = self.env.step(action_np)
         done = self._any_done(terminated) or self._any_done(truncated)
         self.state = self._extract_state(obs)
         img = self._extract_obs_image(obs)
+        self.last_img = img # Cache for render
         # reward from vector env might be shape (B,), make scalar
         rew = self._to_scalar_reward(reward)
         return img, rew, done, info
+
+    def render(self, mode="rgb_array", **kwargs):
+        """
+        Return the last observation image as a render.
+        Logger expects (H, W, 3) for rgb_array.
+        Our image is (B, 3, H, W).
+        """
+        if mode == "rgb_array" and hasattr(self, 'last_img') and self.last_img is not None:
+            # Take first env, transpose (3, H, W) -> (H, W, 3)
+            img = self.last_img[0].transpose(1, 2, 0)
+            return img
+        return None
 
     def _extract_state(self, obs):
         """
@@ -177,6 +208,17 @@ class ManiSkillEnvAdapter:
                 raise ValueError(f"RGB batch {rgb.shape[0]} != expected B {self.B}")
 
         # Must match buffer expected C/H/W exactly
+        if (rgb.shape[1], rgb.shape[2], rgb.shape[3]) != (self.C, self.H, self.W):
+            # Attempt resize using torch for convenience (since we have torch)
+            import torch.nn.functional as F
+            
+            # (B, C, H_in, W_in) -> (B, C, H_out, W_out)
+            t_in = torch.from_numpy(rgb).float() # interpolate needs float
+            t_out = F.interpolate(t_in, size=(self.H, self.W), mode='bilinear', align_corners=False)
+            
+            # Back to uint8
+            rgb = t_out.clamp(0, 255).byte().numpy()
+
         if (rgb.shape[1], rgb.shape[2], rgb.shape[3]) != (self.C, self.H, self.W):
             raise ValueError(
                 f"RGB is (B,{rgb.shape[1]},{rgb.shape[2]},{rgb.shape[3]}) "

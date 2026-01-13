@@ -49,7 +49,7 @@ latent_dim: 50
 
 # wandb (required: fill in your details)
 wandb_project: modemv2
-wandb_entity: palanc
+wandb_entity: null
 
 # misc
 seed: 1
@@ -123,4 +123,3 @@ hydra:
         mem_gb: 700
         name: ${hydra.job.name}
         submitit_folder: ${hydra.sweep.dir}/.submitit/%j
-        partition: learnaccel

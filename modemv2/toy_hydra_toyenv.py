@@ -138,6 +138,32 @@ def main(cfg):
     # env = ToyEnv(cfg, batch_size=expected_B, obs_tail_shape=expected_tail)
     env = ManiSkillEnvAdapter(cfg, expected_B, expected_tail)
 
+    # Spoof demonstrations
+    demo_buf = ReplayBuffer(cfg)
+    print(f"Spoofing {cfg.demos} demonstration episodes...")
+    for i in range(cfg.demos):
+        obs = env.reset()
+        episode = Episode(cfg, obs, env.state)
+        while not episode.done:
+            # Random action
+            action = torch.rand((cfg.action_dim,), device=agent.device) * 2 - 1
+            action_np = action.cpu().numpy()
+            
+            # Expand for batch if needed (Env expects (B, act_dim))
+            if expected_B > 1:
+                env_action = np.repeat(action_np[None, :], expected_B, axis=0)
+            else:
+                env_action = action_np
+
+            obs2, reward, done, info = env.step(env_action)
+            
+            # Store unbatched
+            episode += (obs2, env.state, action, reward, done)
+            obs = obs2
+        demo_buf += episode
+    print(f"Demo buffer populated with {len(demo_buf)} steps.")
+
+
     # Collect 2 episodes, then do a handful of updates
     total_steps = 0
     for ep in range(2):
@@ -179,8 +205,8 @@ def main(cfg):
         print(f"ep {ep} len={len(episode)} rew={episode.cumulative_reward:.3f} succ_count={succ}")
 
     # Do a small number of updates (this is the real “does tdmpc plumbing work?” test)
-    for i in range(20000):
-        metrics = agent.update(buf, total_steps + i, demo_buffer=None, train_pi=True)
+    for i in range(200):
+        metrics = agent.update(buf, total_steps + i, demo_buffer=demo_buf, train_pi=True)
         if (i + 1) % 100 == 0:
             print("update", i + 1, "total_loss", float(metrics.get("total_loss", 0.0)))
 

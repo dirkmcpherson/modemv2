@@ -354,7 +354,7 @@ class VideoRecorder:
 
     def init(self, env, enabled=True):
         self.frames = []
-        self.enabled = self.save_dir and self._wandb and enabled
+        self.enabled = self.save_dir and enabled
         self.record(env)
 
     def record(self, env):
@@ -371,9 +371,30 @@ class VideoRecorder:
     def save(self, step, key="videos/eval_video"):
         if self.enabled and len(self.frames) > 0:
             frames = np.stack(self.frames).transpose(0, 3, 1, 2)
-            self._wandb.log(
-                {key: self._wandb.Video(frames, fps=self.fps, format="mp4")}, step=step
-            )
+            
+            wandb_active = False
+            if self._wandb and hasattr(self._wandb, 'run') and self._wandb.run is not None:
+                wandb_active = getattr(self._wandb.run, 'mode', 'online') != 'disabled'
+
+            if wandb_active:
+                self._wandb.log(
+                    {key: self._wandb.Video(frames, fps=self.fps, format="mp4")}, step=step
+                )
+            else:
+                # Save locally using moviepy
+                import moviepy.editor as mpy
+                if not os.path.exists(self.save_dir):
+                    os.makedirs(self.save_dir)
+                filename = self.save_dir / f"eval_step_{step}.mp4"
+                
+                # Frames are (T, C, H, W), moviepy expects (T, H, W, C)
+                # But wait, self.frames is list of (H, W, 3).
+                # np.stack(self.frames) is (T, H, W, 3).
+                # The stack above did transpose to (T, C, H, W) for wandb.
+                # Let's use self.frames directly for moviepy.
+                clip = mpy.ImageSequenceClip([f for f in self.frames], fps=self.fps)
+                clip.write_videofile(str(filename), logger=None)
+                print(colored(f"Saved local video to {filename}", "cyan"))
 
 
 class Logger(object):
@@ -405,10 +426,14 @@ class Logger(object):
         self._wandb = wandb
         self._video = (
             VideoRecorder(log_dir, self._wandb)
-            if self._wandb and cfg.save_video
+            if cfg.save_video
             else None
         )
-        self._traj_plot = TrajectoryPlotter(self._wandb, cfg) if self._wandb else None
+        try:
+            self._traj_plot = TrajectoryPlotter(self._wandb, cfg) if self._wandb else None
+        except NotImplementedError:
+            print(colored("TrajectoryPlotter not implemented for this task. Skipping.", "yellow"))
+            self._traj_plot = None
         self._q_plot = QPlot(self._wandb, cfg) if self._wandb else None
     @property
     def video(self):
