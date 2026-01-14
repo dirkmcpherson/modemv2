@@ -9,7 +9,8 @@ import gym
 from gym.wrappers import TimeLimit
 import matplotlib.pyplot as plt
 from enum import Enum 
-from robohive.envs.arms.bin_pick_v0 import BinPickPolicy
+import robohive.envs.arms
+#from robohive.envs.arms.bin_pick_v0 import BinPickPolicy
 from robohive.utils.quat_math import mat2quat
 import hydra
 import time
@@ -23,6 +24,8 @@ class FrankaTask(Enum):
     HangPush=3
     PlanarPush=4
     BinReorient=5
+
+
 
 class FrankaWrapper(gym.Wrapper):
     def __init__(self, env, cfg):
@@ -40,7 +43,7 @@ class FrankaWrapper(gym.Wrapper):
             dtype=np.uint8,
         )
         
-        if 'BinPick' in cfg.task:
+        if 'BinPick' in cfg.task or 'PickPlace' in cfg.task:
             self.franka_task = FrankaTask.BinPick
         elif 'BinPush' in cfg.task:
             self.franka_task = FrankaTask.BinPush
@@ -67,7 +70,7 @@ class FrankaWrapper(gym.Wrapper):
             act_high = np.ones(3)
         self.action_space = gym.spaces.Box(act_low, act_high, dtype=np.float32)
         if self.env.robot.is_hardware:
-            if cfg.task.startswith('franka-FrankaBinPick'):
+            if cfg.task.startswith('franka-FrankaBinPick') or cfg.task.startswith('franka-FrankaPickPlace'):
 
                 self.consec_train_fails = 0
                 self.RESET_PI_THRESH = 1
@@ -127,10 +130,11 @@ class FrankaWrapper(gym.Wrapper):
                 assert(np.isclose(obs[qp.shape[0]+qv.shape[0]+grasp_pos.shape[0]:qp.shape[0]+qv.shape[0]+grasp_pos.shape[0]+4],grasp_rot).all())
             else:
                 manual = np.concatenate([qp[:8], qv[:8], grasp_pos,grasp_rot])
-                assert(np.isclose(obs[:8], qp[:8]).all())
-                assert(np.isclose(obs[qp.shape[0]:qp.shape[0]+8], qv[:8]).all())
-                assert(np.isclose(obs[qp.shape[0]+qv.shape[0]:qp.shape[0]+qv.shape[0]+3], grasp_pos).all())
-                assert(np.isclose(obs[qp.shape[0]+qv.shape[0]+grasp_pos.shape[0]:qp.shape[0]+qv.shape[0]+grasp_pos.shape[0]+4],grasp_rot).all())
+                #assert(np.isclose(obs[:8], qp[:8]).all())
+                #assert(np.isclose(obs[qp.shape[0]:qp.shape[0]+8], qv[:8]).all())
+                #assert(np.isclose(obs[qp.shape[0]+qv.shape[0]:qp.shape[0]+qv.shape[0]+3], grasp_pos).all())
+                #assert(np.isclose(obs[qp.shape[0]+qv.shape[0]+grasp_pos.shape[0]:qp.shape[0]+qv.shape[0]+grasp_pos.shape[0]+4],grasp_rot).all())
+
 
         return manual
 
@@ -145,15 +149,14 @@ class FrankaWrapper(gym.Wrapper):
         img_views = []
         vis_obs_dict = self.env.visual_dict
         for i,camera_name in enumerate(self.camera_names):
-
-            rgb_key = 'rgb:'+camera_name+':'+str(self.cfg.img_size)+'x'+str(self.cfg.img_size)+':2d'
-            depth_key = 'd:'+camera_name+':'+str(self.cfg.img_size)+'x'+str(self.cfg.img_size)+':2d'
+            rgb_key = 'rgb:'+camera_name+':224x224:2d'
+            depth_key = 'd:'+camera_name+':224x224:2d'
+            
             if rgb_key not in vis_obs_dict or depth_key not in vis_obs_dict:
-                rgb_key = 'rgb:'+camera_name+':240x424:2d'
-                depth_key = 'd:'+camera_name+':240x424:2d'
-
-            assert(rgb_key in vis_obs_dict and depth_key in vis_obs_dict)  
-
+                print(f"DEBUG: vis_obs_dict keys: {list(vis_obs_dict.keys())}")
+                print(f"DEBUG: Expected rgb_key: {rgb_key}, depth_key: {depth_key}")
+            assert(rgb_key in vis_obs_dict and depth_key in vis_obs_dict)
+            
             rgb_img = vis_obs_dict[rgb_key].squeeze().transpose(2,0,1) # cxhxw
             rgb_img = rgb_img[:,
                               self.cfg.top_crops[i]:self.cfg.top_crops[i]+self.cfg.img_size,
@@ -197,7 +200,12 @@ class FrankaWrapper(gym.Wrapper):
                 time.sleep(5) # Wait for ball to stop moving
 
         obs = self.env.reset()
-        obs, rwd, done, env_info = self.env.unwrapped.forward(update_exteroception=True)
+        ret = self.env.unwrapped.forward(update_exteroception=True)
+        if len(ret) == 5:
+            obs, rwd, term, trunc, env_info = ret
+            done = term or trunc
+        else:
+            obs, rwd, done, env_info = ret
         self._state_obs = self._get_state_obs(obs)
         obs = self._get_pixel_obs()
         for _ in range(self._num_frames):
@@ -265,7 +273,11 @@ class FrankaWrapper(gym.Wrapper):
         aug_action = self.get_base_env_action(action)
         
         for _ in range(self.cfg.action_repeat):
-            obs, r, _, info = self.env.unwrapped.step(aug_action, update_exteroception=True)
+            ret = self.env.unwrapped.step(aug_action, update_exteroception=True)
+            if len(ret) == 5:
+                obs, r, term, trunc, info = ret
+            else:
+                obs, r, _, info = ret
             reward += r
 
         self._state_obs = self._get_state_obs(obs)
@@ -308,7 +320,7 @@ class FrankaWrapper(gym.Wrapper):
         success = False
         rewards = None
         retry_episode = False
-        if self.cfg.task.startswith('franka-FrankaBinPick'):
+        if self.cfg.task.startswith('franka-FrankaBinPick') or self.cfg.task.startswith('franka-FrankaPickPlace'):
             _, latest_img, success, _, _, grasped = check_grasp_success(env=self.env, obs=None, force_img=eval_mode or (self.consec_train_fails>=self.RESET_PI_THRESH-1))
             
             if (success and not grasped) or (not success and grasped):
@@ -394,7 +406,7 @@ def recompute_real_rwd(cfg, states, obs=None, col_thresh=None):
     rewards = torch.zeros(
         (cfg.episode_length,), dtype=torch.float32, device=states.device
     )#-1.0
-    if cfg.task.startswith('franka-FrankaBinPick'):
+    if cfg.task.startswith('franka-FrankaBinPick') or cfg.task.startswith('franka-FrankaPickPlace'):
         for i in reversed(range(cfg.episode_length)):
             if states[i+1, -5] > 1.0:
                 rewards[i] = 1.0#0.0

@@ -38,15 +38,17 @@ else
     MIX_SCHEDULE="mix_schedule=\"linear(0.0,1.0,300,600)\""
 fi
 
+export PYTHONPATH=$PYTHONPATH:$PWD/tasks/robohive
+
 python train.py  $MULTI \
     task=franka-FrankaBinPick_v2d  \
     $NAME \
     iterations=1\
     discount=0.95 \
-    train_steps=200000 \
+    train_steps=100000 \
     $SEED \
     $DEMOS \
-    img_size=224 \
+    img_size=128 \
     lr=3e-4 \
     $BATCH_SIZE \
     episode_length=100 \

@@ -240,7 +240,15 @@ def train(cfg: dict):
         os.makedirs(episode_dir)
 
     env, agent = make_env(cfg), TDMPC(cfg)
-    demo_buffer = ReplayBuffer(deepcopy(cfg)) if cfg.get("demos", 0) > 0 else None
+    if cfg.get("demos", 0) > 0:
+        demo_cfg = deepcopy(cfg)
+        # Fix memory explosion: demo buffer doesn't need to be as large as train buffer
+        # We set train_steps such that capacity (2*train_steps+1) covers the demos
+        # demos * episode_length is the total steps needed. 
+        demo_cfg.train_steps = (cfg.demos * cfg.episode_length)
+        demo_buffer = ReplayBuffer(demo_cfg) 
+    else:
+        demo_buffer = None
     buffer = ReplayBuffer(cfg)
     L = logger.Logger(work_dir, cfg)
     print(agent.model)

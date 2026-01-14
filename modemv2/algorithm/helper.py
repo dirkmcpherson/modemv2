@@ -127,8 +127,8 @@ def enc(cfg):
             nn.Conv2d(cfg.num_channels, cfg.num_channels, 5, stride=2), nn.ReLU(),
             nn.Conv2d(cfg.num_channels, cfg.num_channels, 3, stride=2), nn.ReLU(),
             nn.Conv2d(cfg.num_channels, cfg.num_channels, 3, stride=2), nn.ReLU(),
-            nn.Conv2d(cfg.num_channels, cfg.num_channels, 3, stride=2), nn.ReLU(),
-            nn.Conv2d(cfg.num_channels, cfg.num_channels, 3, stride=2), nn.ReLU(),
+            # nn.Conv2d(cfg.num_channels, cfg.num_channels, 3, stride=2), nn.ReLU(), # JS: These layers are made for a 224x224 image -- commented out to support a smaller image for local training.
+            # nn.Conv2d(cfg.num_channels, cfg.num_channels, 3, stride=2), nn.ReLU(),
         ]
         out_shape = _get_out_shape((C, cfg.img_size, cfg.img_size), layers)
         layers.extend([Flatten(), nn.Linear(np.prod(out_shape), cfg.latent_dim)])
@@ -315,6 +315,9 @@ def trace2episodes(cfg, env, trace, exclude_fails=False, is_demo=False):
                 rgb_key = 'env_infos/visual_dict/rgb:'+cam+':'+str(cfg.img_size)+'x'+str(cfg.img_size)+':2d'
                 d_key = 'env_infos/visual_dict/d:'+cam+':'+str(cfg.img_size)+'x'+str(cfg.img_size)+':2d'
                 if (rgb_key not in pdata) or (d_key not in pdata):
+                    rgb_key = 'env_infos/visual_dict/rgb:'+cam+':224x224:2d'
+                    d_key = 'env_infos/visual_dict/d:'+cam+':224x224:2d'
+                if (rgb_key not in pdata) or (d_key not in pdata):
                     rgb_key = 'env_infos/visual_dict/rgb:'+cam+':240x424:2d'
                     d_key = 'env_infos/visual_dict/d:'+cam+':240x424:2d'                      
                 assert(rgb_key in pdata
@@ -449,7 +452,7 @@ def trace2episodes(cfg, env, trace, exclude_fails=False, is_demo=False):
     return episodes
 
 def get_demos(cfg, env):
-    demo_dir = git.Repo(hydra.utils.get_original_cwd(), search_parent_directories=True).working_tree_dir + "/modemv2"
+    demo_dir = git.Repo(hydra.utils.get_original_cwd(), search_parent_directories=True).working_tree_dir
     fps = glob.glob(str(Path(demo_dir) / "demonstrations" / f"{cfg.task}/*.pickle"))
     if len(fps) == 0:
         fps = glob.glob(str(Path(demo_dir) / "demonstrations" / f"{cfg.task}/*.h5"))

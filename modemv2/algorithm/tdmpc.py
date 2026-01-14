@@ -565,6 +565,9 @@ class TDMPC:
             demo_buffer.cfg.batch_size = self.demo_batch_size
         replay_buffer.cfg.batch_size = self.batch_size - self.demo_batch_size
 
+        if train_pi:
+            self.unfreeze_online()
+
         # Sample from interaction dataset
         (
             obs,
