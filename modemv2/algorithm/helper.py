@@ -341,6 +341,8 @@ def trace2episodes(cfg, env, trace, exclude_fails=False, is_demo=False):
             franka_task = FrankaTask.BinPick
         elif 'BinReorient' in cfg.task:
             franka_task = FrankaTask.BinReorient
+        elif 'PickCube' in cfg.task:
+            franka_task = FrankaTask.PickCube
         else:
             raise NotImplementedError()
 
@@ -457,7 +459,7 @@ def get_demos(cfg, env):
     if len(fps) == 0:
         fps = glob.glob(str(Path(demo_dir) / "demonstrations" / f"{cfg.task}/*.h5"))
     episodes = []
-    assert(cfg.task.startswith('franka-'))
+    assert(cfg.task.startswith('franka-') or cfg.task.startswith('ms-'))
 
     if 'BinPush' in cfg.task:
         franka_task = FrankaTask.BinPush

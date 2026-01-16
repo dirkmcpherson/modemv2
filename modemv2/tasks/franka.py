@@ -24,6 +24,7 @@ class FrankaTask(Enum):
     HangPush=3
     PlanarPush=4
     BinReorient=5
+    PickCube=6
 
 
 

@@ -10,11 +10,21 @@ class ManiSkillEnvAdapter:
         We will emit obs shaped (B, C, H, W) as float32.
         """
         self.B = int(expected_B)
-        self.C, self.H, self.W = map(int, expected_tail)
+        self.C_stacked, self.H, self.W = map(int, expected_tail)
+        self.C = 3 # Mono-camera RGB
+        
+        from collections import deque
+        self._num_frames = cfg.get("frame_stack", 1)
+        self._frames = deque([], maxlen=self._num_frames)
+        
+        assert self.C_stacked == self.C * self._num_frames
 
         # Pick task + modes
+        task_id = cfg.task
+        if task_id.startswith("ms-"):
+            task_id = task_id[3:]
         self.env = gym.make(
-            "PickCube-v1",
+            task_id,
             num_envs=self.B,
             obs_mode="rgbd",                 # or "rgb"
             control_mode="pd_ee_delta_pose", # or whatever you want
@@ -22,17 +32,21 @@ class ManiSkillEnvAdapter:
         )
 
         self.action_space = self.env.action_space
-        # Create observation space matching the expected output shape (B, C, H, W)
+        # Create observation space matching the expected output shape (B, C_stacked, H, W)
         self.observation_space = gym.spaces.Box(
             low=0, high=255, 
-            shape=(self.B, self.C, self.H, self.W), 
+            shape=(self.B, self.C_stacked, self.H, self.W), 
             dtype=np.uint8
         )
         self.reward_range = (-float("inf"), float("inf"))
         self.metadata = {"render.modes": []}
-        self.state_dim = int(getattr(cfg, "state_dim", 0))  # optional, for sanity
-        self.state = None
         self.cfg = cfg
+        
+        # Determine state_dim
+        obs, _ = self.env.reset(seed=0)
+        self.state = self._extract_state(obs)
+        self.state_dim = self.state.shape[0]
+        cfg.state_dim = self.state_dim
 
         self.debug_once = True
 
@@ -50,8 +64,13 @@ class ManiSkillEnvAdapter:
         obs, _ = self.env.reset(seed=seed)
 
         # Always compute outputs
-        img = self._extract_obs_image(obs)   # should be (B,C,H,W) uint8
-        self.last_img = img  # Cache for render
+        img = self._extract_obs_image(obs)   # should be (B,3,H,W) uint8
+        self.last_img = img  # Cache for render (unstacked)
+        
+        for _ in range(self._num_frames):
+            self._frames.append(img)
+            
+        stacked_img = self._stacked_obs()
         self.state = self._extract_state(obs)  # should be (state_dim,) float32
 
         if self.debug_once:
@@ -71,11 +90,11 @@ class ManiSkillEnvAdapter:
                 print("rgb shape:", self._to_cpu_numpy(cam["rgb"]).shape, "dtype:", self._to_cpu_numpy(cam["rgb"]).dtype)
                 print("depth shape:", self._to_cpu_numpy(cam["depth"]).shape, "dtype:", self._to_cpu_numpy(cam["depth"]).dtype)
 
-            print("img dtype/min/max:", img.dtype, int(img.min()), int(img.max()))
+            print("stacked img shape:", stacked_img.shape, "dtype:", stacked_img.dtype)
             print("state len/dtype:", len(self.state), self.state.dtype)
             self.debug_once = False
 
-        return img
+        return stacked_img
 
 
     def _any_done(self, x):
@@ -92,6 +111,13 @@ class ManiSkillEnvAdapter:
         r = np.asarray(r, dtype=np.float32)
         return float(r.mean()) if r.size > 1 else float(r)
 
+    def _stacked_obs(self):
+        assert len(self._frames) == self._num_frames
+        # Each frame is (B, 3, H, W). Concatenate on channel dim -> (B, 3*Stack, H, W)
+        obs = np.concatenate(list(self._frames), axis=1)
+        assert obs.shape[1] == self.C_stacked
+        return obs
+
     def step(self, action_np):
         """
         action_np can be (action_dim,) or (B, action_dim).
@@ -105,12 +131,16 @@ class ManiSkillEnvAdapter:
 
         obs, reward, terminated, truncated, info = self.env.step(action_np)
         done = self._any_done(terminated) or self._any_done(truncated)
-        self.state = self._extract_state(obs)
+        
         img = self._extract_obs_image(obs)
-        self.last_img = img # Cache for render
+        self.last_img = img # Cache for render (unstacked)
+        self._frames.append(img)
+        stacked_img = self._stacked_obs()
+        
+        self.state = self._extract_state(obs)
         # reward from vector env might be shape (B,), make scalar
         rew = self._to_scalar_reward(reward)
-        return img, rew, done, info
+        return stacked_img, rew, done, info
 
     def render(self, mode="rgb_array", **kwargs):
         """
@@ -150,7 +180,12 @@ class ManiSkillEnvAdapter:
                 s = np.concatenate([s, s_extra], axis=0)
 
         # Pad/trim to cfg.state_dim
-        target = int(getattr(self.cfg, "state_dim", s.shape[0]))
+        import omegaconf
+        if omegaconf.OmegaConf.is_missing(self.cfg, "state_dim"):
+            target = s.shape[0]
+        else:
+            target = int(self.cfg.state_dim)
+            
         if s.shape[0] < target:
             s = np.pad(s, (0, target - s.shape[0]), mode="constant")
         elif s.shape[0] > target:
