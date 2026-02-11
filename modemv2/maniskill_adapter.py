@@ -62,6 +62,11 @@ class ManiSkillEnvAdapter:
 
     def reset(self, seed=0):
         obs, _ = self.env.reset(seed=seed)
+        self._current_step = 0
+        self._terminated_early = False
+        self._final_obs = None
+        self._final_rew = 0.0
+        self._final_info = {}
 
         # Always compute outputs
         img = self._extract_obs_image(obs)   # should be (B,3,H,W) uint8
@@ -123,6 +128,14 @@ class ManiSkillEnvAdapter:
         action_np can be (action_dim,) or (B, action_dim).
         ManiSkill expects (B, action_dim) when num_envs=B.
         """
+        self._current_step += 1
+        
+        if self._terminated_early:
+            self._frames.append(self._final_obs)
+            stacked_img = self._stacked_obs()
+            done = self._current_step >= self.cfg.episode_length
+            return stacked_img, self._final_rew, done, self._final_info
+
         action_np = np.asarray(action_np, dtype=np.float32)
         if action_np.ndim == 1:
             action_np = np.repeat(action_np[None, :], self.B, axis=0)
@@ -130,7 +143,7 @@ class ManiSkillEnvAdapter:
         self.last_eef_cmd = action_np # Store for logger
 
         obs, reward, terminated, truncated, info = self.env.step(action_np)
-        done = self._any_done(terminated) or self._any_done(truncated)
+        env_done = self._any_done(terminated) or self._any_done(truncated)
         
         img = self._extract_obs_image(obs)
         self.last_img = img # Cache for render (unstacked)
@@ -140,6 +153,17 @@ class ManiSkillEnvAdapter:
         self.state = self._extract_state(obs)
         # reward from vector env might be shape (B,), make scalar
         rew = self._to_scalar_reward(reward)
+        
+        # persistence logic
+        if env_done and self._current_step < self.cfg.episode_length:
+            self._terminated_early = True
+            self._final_obs = img
+            self._final_rew = rew
+            self._final_info = info
+            done = False
+        else:
+            done = env_done or (self._current_step >= self.cfg.episode_length)
+            
         return stacked_img, rew, done, info
 
     def render(self, mode="rgb_array", **kwargs):

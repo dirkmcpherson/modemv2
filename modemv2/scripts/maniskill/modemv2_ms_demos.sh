@@ -2,9 +2,9 @@
 
 # Default values
 MULTI=""
-NAME="exp_name=ms_pick_cube"
+NAME="exp_name=ms_pick_cube_demos"
 SEED="seed=42069"
-DEMOS="demos=0"
+DEMOS="demos=200"
 LAUNCHER="hydra/launcher=local"
 BATCH_SIZE="batch_size=256"
 SEED_STEPS="seed_steps=5000"
@@ -12,6 +12,7 @@ EVAL_EPISODES="eval_episodes=10"
 EVAL_FREQ="eval_freq=2500"
 MIX_SCHEDULE="mix_schedule=\"linear(0.0,1.0,5000,105000)\""
 TRAIN_STEPS="train_steps=100000"
+EPISODE_LENGTH="episode_length=100"
 
 # Override with command line arguments if provided
 if [ $# -ge 1 ]; then
@@ -35,6 +36,7 @@ export PYTHONPATH=$PYTHONPATH:$PWD/modemv2/tasks/robohive
     iterations=1 \
     discount=0.95 \
     $TRAIN_STEPS \
+    $EPISODE_LENGTH \
     $SEED \
     $DEMOS \
     $BATCH_SIZE \

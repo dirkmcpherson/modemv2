@@ -1,0 +1,17 @@
+iterations: 1
+episode_length: 50
+img_size: 128
+lr: 3e-4
+batch_size: 256
+mix_schedule: "linear(0.0,1.0,5000,105000)"
+demo_schedule: ${mix_schedule}
+camera_views: [base_camera]
+left_crops: [0]
+top_crops: [0]
+success_mask_left: 0
+success_mask_right: 0
+success_mask_top: 0
+success_mask_bottom: 0
+success_thresh: 0.0
+success_uv: [0,0.55]
+eval_freq: 2500

@@ -328,7 +328,10 @@ def trace2episodes(cfg, env, trace, exclude_fails=False, is_demo=False):
                 rgb_imgs = rgb_imgs[:cfg.episode_length+1,:,tc:tc+cfg.img_size,lc:lc+cfg.img_size]
                 depth_imgs = pdata[d_key][:]
                 depth_imgs = depth_imgs[:cfg.episode_length+1,:,tc:tc+cfg.img_size,lc:lc+cfg.img_size]
-                views.append(np.concatenate([rgb_imgs, depth_imgs], axis=1))
+                if 'PickCube' in cfg.task:
+                    views.append(rgb_imgs)
+                else:
+                    views.append(np.concatenate([rgb_imgs, depth_imgs], axis=1))
         obs = np.stack(views, axis=1)
 
         if 'BinPush' in cfg.task:
@@ -362,6 +365,15 @@ def trace2episodes(cfg, env, trace, exclude_fails=False, is_demo=False):
                                         qv[:,:17],
                                         grasp_pos,
                                         grasp_rot], axis=1)
+            elif franka_task == FrankaTask.PickCube:
+                state = np.concatenate([qp,
+                                        qv,
+                                        grasp_pos,
+                                        grasp_rot], axis=1)
+                if state.shape[1] < cfg.state_dim:
+                    state = np.pad(state, ((0, 0), (0, cfg.state_dim - state.shape[1])), mode="constant")
+                else:
+                    state = state[:, :cfg.state_dim]
             elif not cfg.real_robot:      
                 state = np.concatenate([qp[:,:8],
                                         qv[:,:8],
@@ -422,6 +434,8 @@ def trace2episodes(cfg, env, trace, exclude_fails=False, is_demo=False):
             aug_actions[:,3] = np.cos(yaw)
             aug_actions[:,4] = np.sin(yaw)   
             aug_actions[:,5:] = actions[:,6:]         
+        elif franka_task == FrankaTask.PickCube:
+            aug_actions = actions
         else:
             raise NotImplementedError()
 
@@ -447,7 +461,31 @@ def trace2episodes(cfg, env, trace, exclude_fails=False, is_demo=False):
                 rewards = np.array(pdata['env_infos/solved'][:cfg.episode_length], dtype=np.float32)#-1.
             else:
                 rewards = np.array(pdata['env_infos/rwd_dense'][:cfg.episode_length], dtype=np.float32)
+
+        # Pad trajectories that are shorter than cfg.episode_length
+        curr_len = actions.shape[0]
+        if curr_len < cfg.episode_length:
+            pad_len = cfg.episode_length - curr_len
             
+            # Pad obs: repeat last frame
+            last_obs = obs[-1:]
+            obs_padding = np.repeat(last_obs, pad_len, axis=0)
+            obs = np.concatenate([obs, obs_padding], axis=0)
+            
+            # Pad state: repeat last state
+            last_state = state[-1:]
+            state_padding = torch.repeat_interleave(last_state, pad_len, dim=0)
+            state = torch.cat([state, state_padding], dim=0)
+            
+            # Pad actions: zeros
+            action_padding = np.zeros((pad_len, actions.shape[1]), dtype=actions.dtype)
+            actions = np.concatenate([actions, action_padding], axis=0)
+            
+            # Pad rewards: repeat last reward (preserving success signal if present)
+            last_rew = rewards[-1]
+            reward_padding = np.full((pad_len,), last_rew, dtype=rewards.dtype)
+            rewards = np.concatenate([rewards, reward_padding], axis=0)
+
         episode = Episode.from_trajectory(cfg, obs, state, actions, rewards)
         episodes.append(episode)
     
@@ -471,6 +509,8 @@ def get_demos(cfg, env):
         franka_task = FrankaTask.BinPick
     elif 'BinReorient' in cfg.task:
         franka_task = FrankaTask.BinReorient
+    elif 'PickCube' in cfg.task:
+        franka_task = FrankaTask.PickCube
     else:
         raise NotImplementedError()
     exclude_fails = cfg.real_robot and (franka_task == FrankaTask.BinPush or franka_task == FrankaTask.PlanarPush)
