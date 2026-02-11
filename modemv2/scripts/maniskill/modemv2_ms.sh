@@ -29,7 +29,7 @@ fi
 
 export PYTHONPATH=$PYTHONPATH:$PWD/modemv2/tasks/robohive
 
-./.venv/bin/python modemv2/train.py $MULTI \
+python modemv2/train.py $MULTI \
     suite@_global_=ms \
     task=ms-PickCube-v1 \
     $NAME \
