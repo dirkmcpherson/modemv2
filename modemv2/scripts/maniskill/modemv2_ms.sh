@@ -3,7 +3,8 @@
 # Default values
 MULTI=""
 NAME="exp_name=ms_pick_cube"
-SEED="seed=42069"
+SEED_VAL=$((1 + RANDOM % 1000))
+SEED="seed=$SEED_VAL"
 DEMOS="demos=0"
 LAUNCHER="hydra/launcher=local"
 BATCH_SIZE="batch_size=256"
