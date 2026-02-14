@@ -9,9 +9,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.append(str(REPO_ROOT / "modemv2" / "tasks" / "robohive"))
 
-from robohive.logger.grouped_datasets import Trace
+# from robohive.logger.grouped_datasets import Trace
 
-def convert_ms_to_modemv2(h5_path, output_dir, task_name):
+def convert_ms_to_modemv2(h5_path, output_dir):
     print(f"Opening {h5_path}...")
     os.makedirs(output_dir, exist_ok=True)
     
@@ -30,6 +30,7 @@ def convert_ms_to_modemv2(h5_path, output_dir, task_name):
             state = traj["obs/state"][:]
             actions = traj["actions"][:]
             success = traj["success"][:]
+            rewards = traj["rewards"][:]
             
             # Decompose state (Assuming ManiSkill Panda 3 state structure)
             # qpos: 0-9, qvel: 9-18, tcp_pos: 18-21, tcp_quat: 21-25
@@ -51,9 +52,10 @@ def convert_ms_to_modemv2(h5_path, output_dir, task_name):
                     "time": np.arange(state.shape[0]),
                     "observations": state, # placeholder
                     "actions": actions,
-                    "rewards": np.zeros(state.shape[0]), # placeholder
+                    "rewards": rewards, # top-level reward key
                     "env_infos/time": np.arange(state.shape[0]),
                     "env_infos/solved": success,
+                    "env_infos/rwd_dense": rewards, # dense reward for ModemV2
                     "env_infos/done": success, # or similar
                     "env_infos/obs_dict/qp": qp,
                     "env_infos/obs_dict/qv": qv,
@@ -80,6 +82,15 @@ def convert_ms_to_modemv2(h5_path, output_dir, task_name):
                 pickle.dump(full_data, pf)
 
 if __name__ == "__main__":
-    H5_PATH = "/home/j/.maniskill/demos/PickCube-v1/motionplanning/trajectory.state+rgb.pd_ee_delta_pose.physx_cpu.h5"
-    OUT_DIR = "/home/j/workspace/modemv2/demonstrations/ms-PickCube-v1"
-    convert_ms_to_modemv2(H5_PATH, OUT_DIR, "ms-PickCube-v1")
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--teleop', action='store_true')
+    args = parser.parse_args()
+
+    if args.teleop:
+        H5_PATH = "/home/j/.maniskill/demos/PickCube-v1/teleop/trajectory.state+rgb.pd_ee_delta_pose.physx_cpu.h5"
+        OUT_DIR = "/home/j/workspace/modemv2/demonstrations/ms-PickCube-v1-teleop"
+    else:
+        H5_PATH = "/home/j/.maniskill/demos/PickCube-v1/motionplanning/trajectory.state+rgb.pd_ee_delta_pose.physx_cpu.h5"
+        OUT_DIR = "/home/j/workspace/modemv2/demonstrations/ms-PickCube-v1"
+    convert_ms_to_modemv2(H5_PATH, OUT_DIR)

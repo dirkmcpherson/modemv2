@@ -153,6 +153,11 @@ class ManiSkillEnvAdapter:
         self.state = self._extract_state(obs)
         # reward from vector env might be shape (B,), make scalar
         rew = self._to_scalar_reward(reward)
+
+        # If sparse rewards requested, use success signal from info
+        if not self.cfg.dense_reward:
+            if isinstance(info, dict) and "success" in info:
+                rew = self._to_scalar_reward(info["success"])
         
         # persistence logic
         if env_done and self._current_step < self.cfg.episode_length:
@@ -272,7 +277,7 @@ class ManiSkillEnvAdapter:
             import torch.nn.functional as F
             
             # (B, C, H_in, W_in) -> (B, C, H_out, W_out)
-            t_in = torch.from_numpy(rgb).float() # interpolate needs float
+            t_in = torch.as_tensor(rgb).float() # interpolate needs float
             t_out = F.interpolate(t_in, size=(self.H, self.W), mode='bilinear', align_corners=False)
             
             # Back to uint8

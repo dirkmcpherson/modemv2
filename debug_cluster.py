@@ -1,44 +1,31 @@
 import numpy as np
-import numpy
 import torch
-import sapien
 import sys
-import os
+
+# Monkey-patch before anything else
+orig_from_numpy = torch.from_numpy
+def patched_from_numpy(arr):
+    try:
+        return orig_from_numpy(arr)
+    except TypeError:
+        return torch.as_tensor(arr)
+
+torch.from_numpy = patched_from_numpy
 
 print(f"Python: {sys.version}")
 print(f"NumPy version: {np.__version__}")
-print(f"NumPy file: {np.__file__}")
-print(f"NumPy alias match: {np is numpy}")
 print(f"Torch version: {torch.__version__}")
-print(f"Torch file: {torch.__file__}")
-print(f"Sapien version: {sapien.__version__}")
 
-# Try to see where the internal np.ndarray of torch comes from
-try:
-    import torch._C
-    # This is internal, but might give a hint
-    print(f"Torch internal numpy check: {hasattr(torch._C, '_from_numpy')}")
-except:
-    pass
+arr = np.array([1.0, 2.0, 3.0], dtype=np.float32)
 
-# Try a small test
+print("\nTesting Patched from_numpy:")
+
 try:
-    arr = np.array([1.0, 2.0, 3.0], dtype=np.float32)
-    print(f"Array type: {type(arr)}")
-    print(f"Array module: {type(arr).__module__}")
     t = torch.from_numpy(arr)
-    print("torch.from_numpy test: SUCCESS")
+    print("  torch.from_numpy(arr): SUCCESS (using patch)")
 except Exception as e:
-    print(f"torch.from_numpy test: FAILED - {type(e).__name__}: {e}")
-    # Print type identities if possible
-    try:
-        from numpy import ndarray
-        print(f"ndarray type in script: {id(ndarray)}")
-        print(f"type(arr) in script: {id(type(arr))}")
-    except:
-        pass
+    print(f"  torch.from_numpy(arr): FAILED - {e}")
 
-# Check sys.path
-print("\nsys.path:")
-for p in sys.path:
-    print(f"  {p}")
+# Now try to import ManiSkill and see if it crashes during env creation
+# (This part is for the user to verify if they can)
+print("\nPatch applied. User should try running the training script now.")

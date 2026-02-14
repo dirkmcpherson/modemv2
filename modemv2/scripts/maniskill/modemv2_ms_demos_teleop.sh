@@ -5,7 +5,8 @@ MULTI=""
 NAME="exp_name=ms_pick_cube_demos"
 SEED_VAL=$((1 + RANDOM % 1000))
 SEED="seed=$SEED_VAL"
-DEMOS="demos=200"
+DEMOS="demos=10"
+DEMO_DIR='demo_dir=ms-PickCube-v1-teleop'
 LAUNCHER="hydra/launcher=local"
 BATCH_SIZE="batch_size=256"
 SEED_STEPS="seed_steps=5000"
@@ -52,6 +53,7 @@ if $PYTHON modemv2/train.py $MULTI \
     $EPISODE_LENGTH \
     $SEED \
     $DEMOS \
+    $DEMO_DIR \
     $BATCH_SIZE \
     $SEED_STEPS \
     $EVAL_EPISODES \
@@ -75,6 +77,7 @@ if grep -q "Could not override 'suite'. Did you mean to override suite@_global_?
         $EPISODE_LENGTH \
         $SEED \
         $DEMOS \
+        $DEMO_DIR \
         $BATCH_SIZE \
         $SEED_STEPS \
         $EVAL_EPISODES \

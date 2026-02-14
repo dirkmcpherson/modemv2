@@ -12,6 +12,7 @@ train_steps: 100000
 
 # demonstrations
 demos: 5
+demo_dir: null
 
 # planning
 iterations: ???
@@ -76,7 +77,7 @@ bc_model_fp: ???
 plan_policy: false
 bc_rollout: false
 bc_q_pol: false
-dense_reward: false
+dense_reward: True
 gt_rollout: false
 num_cpu: 8
 left_crops: ???

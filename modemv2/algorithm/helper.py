@@ -492,10 +492,15 @@ def trace2episodes(cfg, env, trace, exclude_fails=False, is_demo=False):
     return episodes
 
 def get_demos(cfg, env):
-    demo_dir = git.Repo(hydra.utils.get_original_cwd(), search_parent_directories=True).working_tree_dir
-    fps = glob.glob(str(Path(demo_dir) / "demonstrations" / f"{cfg.task}/*.pickle"))
+    repo_dir = git.Repo(hydra.utils.get_original_cwd(), search_parent_directories=True).working_tree_dir
+    if cfg.get('demo_dir', None):
+        demo_dir = Path(repo_dir) / "demonstrations" / cfg.demo_dir
+    else:
+        demo_dir = Path(repo_dir) / "demonstrations" / cfg.task
+
+    fps = glob.glob(str(demo_dir / "*.pickle"))
     if len(fps) == 0:
-        fps = glob.glob(str(Path(demo_dir) / "demonstrations" / f"{cfg.task}/*.h5"))
+        fps = glob.glob(str(demo_dir / "*.h5"))
     episodes = []
     assert(cfg.task.startswith('franka-') or cfg.task.startswith('ms-'))
 

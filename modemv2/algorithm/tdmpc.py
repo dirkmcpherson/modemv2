@@ -657,11 +657,12 @@ class TDMPC:
         # Update priorities for both buffers
         if self.cfg.per:
             priorities = priority_loss.clamp(max=1e4).detach()
+            replay_idx_len = self.batch_size - self.demo_batch_size
             replay_buffer.update_priorities(
-                idxs[: self.cfg.batch_size], priorities[: self.cfg.batch_size]
+                idxs[: replay_idx_len], priorities[: replay_idx_len]
             )
-            if demo_buffer is not None:
-                demo_buffer.update_priorities(demo_idxs, priorities[self.cfg.batch_size :])
+            if demo_buffer is not None and self.demo_batch_size > 0:
+                demo_buffer.update_priorities(demo_idxs, priorities[replay_idx_len :])
 
         if train_pi:
             pi_loss = self.update_pi(zs)
