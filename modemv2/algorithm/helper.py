@@ -314,24 +314,23 @@ def trace2episodes(cfg, env, trace, exclude_fails=False, is_demo=False):
             for i, cam in enumerate(cfg.camera_views):
                 rgb_key = 'env_infos/visual_dict/rgb:'+cam+':'+str(cfg.img_size)+'x'+str(cfg.img_size)+':2d'
                 d_key = 'env_infos/visual_dict/d:'+cam+':'+str(cfg.img_size)+'x'+str(cfg.img_size)+':2d'
-                if (rgb_key not in pdata) or (d_key not in pdata):
+                if rgb_key not in pdata:
                     rgb_key = 'env_infos/visual_dict/rgb:'+cam+':224x224:2d'
                     d_key = 'env_infos/visual_dict/d:'+cam+':224x224:2d'
-                if (rgb_key not in pdata) or (d_key not in pdata):
+                if rgb_key not in pdata:
                     rgb_key = 'env_infos/visual_dict/rgb:'+cam+':240x424:2d'
-                    d_key = 'env_infos/visual_dict/d:'+cam+':240x424:2d'                      
-                assert(rgb_key in pdata
-                    and d_key in pdata)
+                    d_key = 'env_infos/visual_dict/d:'+cam+':240x424:2d'
+                assert rgb_key in pdata, f"Missing {rgb_key} in demo data"
                 lc = cfg.left_crops[i]
-                tc = cfg.top_crops[i]                
+                tc = cfg.top_crops[i]
                 rgb_imgs = pdata[rgb_key][:].transpose(0,3,1,2)
                 rgb_imgs = rgb_imgs[:cfg.episode_length+1,:,tc:tc+cfg.img_size,lc:lc+cfg.img_size]
-                depth_imgs = pdata[d_key][:]
-                depth_imgs = depth_imgs[:cfg.episode_length+1,:,tc:tc+cfg.img_size,lc:lc+cfg.img_size]
-                if 'PickCube' in cfg.task:
-                    views.append(rgb_imgs)
-                else:
+                if d_key in pdata:
+                    depth_imgs = pdata[d_key][:]
+                    depth_imgs = depth_imgs[:cfg.episode_length+1,:,tc:tc+cfg.img_size,lc:lc+cfg.img_size]
                     views.append(np.concatenate([rgb_imgs, depth_imgs], axis=1))
+                else:
+                    views.append(rgb_imgs)
         obs = np.stack(views, axis=1)
 
         if 'BinPush' in cfg.task:
@@ -366,10 +365,15 @@ def trace2episodes(cfg, env, trace, exclude_fails=False, is_demo=False):
                                         grasp_pos,
                                         grasp_rot], axis=1)
             elif franka_task == FrankaTask.PickCube:
+                # 29-dim: qpos(9) + qvel(9) + is_grasped(1) + tcp_pose(7) + goal_pos(3)
+                is_grasped = pdata['env_infos/obs_dict/is_grasped'][:cfg.episode_length+1]
+                goal_pos = pdata['env_infos/obs_dict/goal_pos'][:cfg.episode_length+1]
                 state = np.concatenate([qp,
                                         qv,
+                                        is_grasped,
                                         grasp_pos,
-                                        grasp_rot], axis=1)
+                                        grasp_rot,
+                                        goal_pos], axis=1)
                 if state.shape[1] < cfg.state_dim:
                     state = np.pad(state, ((0, 0), (0, cfg.state_dim - state.shape[1])), mode="constant")
                 else:

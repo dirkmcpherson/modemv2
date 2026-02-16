@@ -6,18 +6,26 @@ import mani_skill.envs  # registers envs
 class ManiSkillEnvAdapter:
     def __init__(self, cfg, expected_B: int, expected_tail):
         """
-        expected_tail is (C, H, W) from ReplayBuffer._obs.shape[2:].
-        We will emit obs shaped (B, C, H, W) as float32.
+        expected_tail is (C, H, W) — per-view channels (with frame_stack), height, width.
+        obs_shape will be (num_cameras, C, H, W) matching the franka wrapper convention.
         """
         self.B = int(expected_B)
         self.C_stacked, self.H, self.W = map(int, expected_tail)
-        self.C = 3 # Mono-camera RGB
-        
+        self.C = 4  # channels per frame per camera (RGB + Depth), matching franka convention
+
         from collections import deque
         self._num_frames = cfg.get("frame_stack", 1)
         self._frames = deque([], maxlen=self._num_frames)
-        
+
         assert self.C_stacked == self.C * self._num_frames
+
+        # Camera views from config
+        self.camera_names = list(cfg.get("camera_views", ["base_camera"]))
+        self._num_cameras = len(self.camera_names)
+
+        # Use panda_wristcam if hand_camera is requested
+        needs_wristcam = any("hand" in c for c in self.camera_names)
+        robot_uids = "panda_wristcam" if needs_wristcam else "panda"
 
         # Pick task + modes
         task_id = cfg.task
@@ -26,22 +34,23 @@ class ManiSkillEnvAdapter:
         self.env = gym.make(
             task_id,
             num_envs=self.B,
-            obs_mode="rgbd",                 # or "rgb"
-            control_mode="pd_ee_delta_pose", # or whatever you want
-            render_mode=None,                # keep None for headless smoke test
+            obs_mode="rgbd",
+            control_mode="pd_ee_delta_pose",
+            render_mode=None,
+            robot_uids=robot_uids,
         )
 
         self.action_space = self.env.action_space
-        # Create observation space matching the expected output shape (B, C_stacked, H, W)
+        # observation_space: (num_cameras, C_stacked, H, W) — matches franka convention
         self.observation_space = gym.spaces.Box(
-            low=0, high=255, 
-            shape=(self.B, self.C_stacked, self.H, self.W), 
+            low=0, high=255,
+            shape=(self._num_cameras, self.C_stacked, self.H, self.W),
             dtype=np.uint8
         )
         self.reward_range = (-float("inf"), float("inf"))
         self.metadata = {"render.modes": []}
         self.cfg = cfg
-        
+
         # Determine state_dim
         obs, _ = self.env.reset(seed=0)
         self.state = self._extract_state(obs)
@@ -68,47 +77,36 @@ class ManiSkillEnvAdapter:
         self._final_rew = 0.0
         self._final_info = {}
 
-        # Always compute outputs
-        img = self._extract_obs_image(obs)   # should be (B,3,H,W) uint8
-        self.last_img = img  # Cache for render (unstacked)
-        
+        img = self._extract_obs_image(obs)  # (num_cameras, C, H, W) uint8
+        self.last_img = img
+
         for _ in range(self._num_frames):
             self._frames.append(img)
-            
+
         stacked_img = self._stacked_obs()
-        self.state = self._extract_state(obs)  # should be (state_dim,) float32
+        self.state = self._extract_state(obs)
 
         if self.debug_once:
-            print("obs type:", type(obs))
-            print("obs keys:", list(obs.keys()) if isinstance(obs, dict) else None)
-            print("agent type:", type(obs["agent"]))
-            if isinstance(obs["agent"], dict):
-                print("agent keys:", obs["agent"].keys())
-                print("qpos shape:", self._to_cpu_numpy(obs["agent"]["qpos"]).shape)
-                print("qvel shape:", self._to_cpu_numpy(obs["agent"]["qvel"]).shape)
-
+            print(f"ManiSkillAdapter cameras: {self.camera_names}")
+            print(f"  per-frame img shape (RGBD): {img.shape}")
+            print(f"  stacked img shape:          {stacked_img.shape}")
+            print(f"  state shape:                {self.state.shape}")
             sd = obs["sensor_data"]
-            cam = sd["base_camera"]
-            print("base_camera type:", type(cam))
-            if isinstance(cam, dict):
-                print("base_camera keys:", cam.keys())
-                print("rgb shape:", self._to_cpu_numpy(cam["rgb"]).shape, "dtype:", self._to_cpu_numpy(cam["rgb"]).dtype)
-                print("depth shape:", self._to_cpu_numpy(cam["depth"]).shape, "dtype:", self._to_cpu_numpy(cam["depth"]).dtype)
-
-            print("stacked img shape:", stacked_img.shape, "dtype:", stacked_img.dtype)
-            print("state len/dtype:", len(self.state), self.state.dtype)
+            for cam_name in self.camera_names:
+                if cam_name in sd:
+                    cam = sd[cam_name]
+                    print(f"  {cam_name} rgb:   {self._to_cpu_numpy(cam['rgb']).shape}")
+                    print(f"  {cam_name} depth: {self._to_cpu_numpy(cam['depth']).shape}")
             self.debug_once = False
 
         return stacked_img
 
-
     def _any_done(self, x):
-        # x can be bool, numpy, torch CPU/CUDA, or vector
         if torch.is_tensor(x):
             return bool(x.detach().any().item())
         x = np.asarray(x)
         return bool(x.any())
-    
+
     def _to_scalar_reward(self, r):
         if torch.is_tensor(r):
             r = r.detach()
@@ -118,18 +116,14 @@ class ManiSkillEnvAdapter:
 
     def _stacked_obs(self):
         assert len(self._frames) == self._num_frames
-        # Each frame is (B, 3, H, W). Concatenate on channel dim -> (B, 3*Stack, H, W)
+        # Each frame is (num_cameras, C, H, W). Concatenate on channel dim -> (num_cameras, C*Stack, H, W)
         obs = np.concatenate(list(self._frames), axis=1)
         assert obs.shape[1] == self.C_stacked
         return obs
 
     def step(self, action_np):
-        """
-        action_np can be (action_dim,) or (B, action_dim).
-        ManiSkill expects (B, action_dim) when num_envs=B.
-        """
         self._current_step += 1
-        
+
         if self._terminated_early:
             self._frames.append(self._final_obs)
             stacked_img = self._stacked_obs()
@@ -140,26 +134,23 @@ class ManiSkillEnvAdapter:
         if action_np.ndim == 1:
             action_np = np.repeat(action_np[None, :], self.B, axis=0)
 
-        self.last_eef_cmd = action_np # Store for logger
+        self.last_eef_cmd = action_np
 
         obs, reward, terminated, truncated, info = self.env.step(action_np)
         env_done = self._any_done(terminated) or self._any_done(truncated)
-        
+
         img = self._extract_obs_image(obs)
-        self.last_img = img # Cache for render (unstacked)
+        self.last_img = img
         self._frames.append(img)
         stacked_img = self._stacked_obs()
-        
+
         self.state = self._extract_state(obs)
-        # reward from vector env might be shape (B,), make scalar
         rew = self._to_scalar_reward(reward)
 
-        # If sparse rewards requested, use success signal from info
         if not self.cfg.dense_reward:
             if isinstance(info, dict) and "success" in info:
                 rew = self._to_scalar_reward(info["success"])
-        
-        # persistence logic
+
         if env_done and self._current_step < self.cfg.episode_length:
             self._terminated_early = True
             self._final_obs = img
@@ -168,26 +159,17 @@ class ManiSkillEnvAdapter:
             done = False
         else:
             done = env_done or (self._current_step >= self.cfg.episode_length)
-            
+
         return stacked_img, rew, done, info
 
     def render(self, mode="rgb_array", **kwargs):
-        """
-        Return the last observation image as a render.
-        Logger expects (H, W, 3) for rgb_array.
-        Our image is (B, 3, H, W).
-        """
         if mode == "rgb_array" and hasattr(self, 'last_img') and self.last_img is not None:
-            # Take first env, transpose (3, H, W) -> (H, W, 3)
-            img = self.last_img[0].transpose(1, 2, 0)
+            # Take first camera view, RGB only (first 3 channels), transpose (C, H, W) -> (H, W, C)
+            img = self.last_img[0, :3].transpose(1, 2, 0)
             return img
         return None
 
     def _extract_state(self, obs):
-        """
-        obs['agent'] is a dict with qpos/qvel (and possibly more).
-        Return UNBATCHED (state_dim,) float32.
-        """
         agent = obs["agent"]
         assert isinstance(agent, dict), f"Expected obs['agent'] dict, got {type(agent)}"
 
@@ -201,20 +183,18 @@ class ManiSkillEnvAdapter:
 
         s = np.concatenate([qpos, qvel], axis=0)
 
-        # Optional: include a few low-dim extras (ONLY if small)
         extra = obs.get("extra", None)
         if isinstance(extra, dict):
             s_extra = self._extract_extra_lowdim(extra)
             if s_extra is not None:
                 s = np.concatenate([s, s_extra], axis=0)
 
-        # Pad/trim to cfg.state_dim
         import omegaconf
         if omegaconf.OmegaConf.is_missing(self.cfg, "state_dim"):
             target = s.shape[0]
         else:
             target = int(self.cfg.state_dim)
-            
+
         if s.shape[0] < target:
             s = np.pad(s, (0, target - s.shape[0]), mode="constant")
         elif s.shape[0] > target:
@@ -228,7 +208,7 @@ class ManiSkillEnvAdapter:
             a = self._to_cpu_numpy(v)
             if a.dtype.kind in "biuf":
                 a = a.reshape(-1)
-                if a.size <= 256:   # keep it small
+                if a.size <= 256:
                     parts.append(a.astype(np.float32))
         if not parts:
             return None
@@ -237,103 +217,60 @@ class ManiSkillEnvAdapter:
             out = out[:512]
         return out
 
-
     def _extract_obs_image(self, obs):
-        cam = obs["sensor_data"]["base_camera"]
-        assert isinstance(cam, dict), f"Expected base_camera dict, got {type(cam)}"
+        """Extract RGBD from all configured cameras.
+        Returns (num_cameras, 4, H, W) — RGB as uint8, Depth as raw float32.
+        np.concatenate upcasts to float32, matching franka sim convention.
+        """
+        import torch.nn.functional as F
 
-        # common keys: rgb, depth, segmentation, etc
-        if "rgb" not in cam:
-            raise KeyError(f"base_camera keys are {list(cam.keys())}, expected 'rgb'")
+        views = []
+        sd = obs["sensor_data"]
+        for cam_name in self.camera_names:
+            if cam_name not in sd:
+                raise KeyError(f"Camera '{cam_name}' not in sensor_data. Available: {list(sd.keys())}")
+            cam = sd[cam_name]
+            if "rgb" not in cam:
+                raise KeyError(f"{cam_name} keys are {list(cam.keys())}, expected 'rgb'")
 
-        rgb = self._to_cpu_numpy(cam["rgb"])
+            # --- RGB ---
+            rgb = self._to_cpu_numpy(cam["rgb"])
+            if rgb.ndim == 4:
+                rgb = rgb[0]  # take first env: (H, W, 3)
+            if rgb.ndim != 3 or rgb.shape[-1] != 3:
+                raise ValueError(f"Unexpected rgb shape from {cam_name}: {rgb.shape}")
+            if rgb.dtype != np.uint8:
+                rgb = np.clip(rgb, 0, 255).astype(np.uint8)
+            rgb = np.transpose(rgb, (2, 0, 1))  # (3, H, W)
 
-        # likely (H,W,3) or (B,H,W,3). We need (B,3,H,W).
-        if rgb.ndim == 3 and rgb.shape[-1] == 3:
-            rgb = rgb[None, ...]  # add batch dim -> (1,H,W,3)
+            # Resize RGB if needed
+            if (rgb.shape[1], rgb.shape[2]) != (self.H, self.W):
+                t_in = torch.as_tensor(rgb).float().unsqueeze(0)
+                t_out = F.interpolate(t_in, size=(self.H, self.W), mode='bilinear', align_corners=False)
+                rgb = t_out.squeeze(0).clamp(0, 255).byte().numpy()
 
-        if rgb.ndim != 4 or rgb.shape[-1] != 3:
-            raise ValueError(f"Unexpected rgb shape: {rgb.shape}")
+            # --- Depth (raw float, matching franka sim convention) ---
+            depth = self._to_cpu_numpy(cam["depth"]).astype(np.float32)
+            if depth.ndim == 4:
+                depth = depth[0]  # (H, W, 1)
+            if depth.ndim == 3 and depth.shape[-1] == 1:
+                depth = depth[:, :, 0]  # (H, W)
+            depth = np.nan_to_num(depth, nan=0.0, posinf=0.0, neginf=0.0)
+            depth = depth[np.newaxis, :, :]  # (1, H, W)
 
-        # keep uint8 in 0..255 for ReplayBuffer
-        if rgb.dtype != np.uint8:
-            # ManiSkill might already return uint8; if float, convert carefully
-            rgb = np.clip(rgb, 0, 255).astype(np.uint8)
+            # Resize depth if needed
+            if (depth.shape[1], depth.shape[2]) != (self.H, self.W):
+                t_in = torch.as_tensor(depth).unsqueeze(0)
+                t_out = F.interpolate(t_in, size=(self.H, self.W), mode='bilinear', align_corners=False)
+                depth = t_out.squeeze(0).numpy()
 
-        rgb = np.transpose(rgb, (0, 3, 1, 2))  # (B,3,H,W) uint8
+            # Concatenate: upcasts RGB uint8 to float32 (same as franka sim)
+            rgbd = np.concatenate([rgb, depth], axis=0)  # (4, H, W)
+            views.append(rgbd)
 
-        # If you asked for num_envs=B, rgb might already be (B,H,W,3).
-        # Ensure batch matches expected:
-        if rgb.shape[0] != self.B:
-            # If B>1 but camera only returns 1, replicate (temporary hack)
-            if rgb.shape[0] == 1:
-                rgb = np.repeat(rgb, self.B, axis=0)
-            else:
-                raise ValueError(f"RGB batch {rgb.shape[0]} != expected B {self.B}")
+        return np.stack(views, axis=0)  # (num_cameras, 4, H, W)
 
-        # Must match buffer expected C/H/W exactly
-        if (rgb.shape[1], rgb.shape[2], rgb.shape[3]) != (self.C, self.H, self.W):
-            # Attempt resize using torch for convenience (since we have torch)
-            import torch.nn.functional as F
-            
-            # (B, C, H_in, W_in) -> (B, C, H_out, W_out)
-            t_in = torch.as_tensor(rgb).float() # interpolate needs float
-            t_out = F.interpolate(t_in, size=(self.H, self.W), mode='bilinear', align_corners=False)
-            
-            # Back to uint8
-            rgb = t_out.clamp(0, 255).byte().numpy()
-
-        if (rgb.shape[1], rgb.shape[2], rgb.shape[3]) != (self.C, self.H, self.W):
-            raise ValueError(
-                f"RGB is (B,{rgb.shape[1]},{rgb.shape[2]},{rgb.shape[3]}) "
-                f"but buffer expects (B,{self.C},{self.H},{self.W}). "
-                "Adjust +obs_shape to match ManiSkill camera resolution."
-            )
-
-        return rgb
-
-
-
-    def _state_to_image(self, state):
-        # Minimal synthetic image fallback: (B, C, H, W)
-        # state may be (B,D) or (D,)
-        s = np.asarray(state, dtype=np.float32)
-        if s.ndim == 1:
-            s = np.repeat(s[None, :], self.B, axis=0)
-        img = np.zeros((self.B, self.C, self.H, self.W), dtype=np.float32)
-        flat = img.reshape(self.B, -1)
-        m = min(flat.shape[1], s.shape[1])
-        flat[:, :m] = 1.0 / (1.0 + np.exp(-s[:, :m]))
-        return img
-
-    def _flatten_dict_numeric(self, d):
-        parts = []
-
-        def rec(x):
-            if isinstance(x, dict):
-                for v in x.values():
-                    rec(v)
-            elif torch.is_tensor(x):
-                a = x.detach().cpu().numpy()
-                parts.append(a.reshape(-1))
-            else:
-                try:
-                    a = np.asarray(x)
-                    if a.dtype.kind in "biuf":
-                        parts.append(a.reshape(-1))
-                except Exception:
-                    pass
-
-        rec(d)
-
-        if not parts:
-            return np.zeros((self.B, 1), dtype=np.float32)
-
-        out = np.concatenate(parts, axis=0)
-        return out
-    
     def _to_cpu_numpy(self, x):
         if torch.is_tensor(x):
             return x.detach().cpu().numpy()
         return np.asarray(x)
-
