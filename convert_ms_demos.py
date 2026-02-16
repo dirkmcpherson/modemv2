@@ -121,9 +121,14 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.teleop:
-        H5_PATH = "/home/j/.maniskill/demos/PickCube-v1/teleop/trajectory.state+rgb+depth.pd_ee_delta_pose.physx_cpu.h5" if args.depth else "/home/j/.maniskill/demos/PickCube-v1/teleop/trajectory.state+rgb.pd_ee_delta_pose.physx_cpu.h5"
-        OUT_DIR = "/home/j/workspace/modemv2/demonstrations/ms-PickCube-v1-teleop"
+        H5_PATH = "~/.maniskill/demos/PickCube-v1/teleop/trajectory.state+rgb+depth.pd_ee_delta_pose.physx_cpu.h5" if args.depth else "~/.maniskill/demos/PickCube-v1/teleop/trajectory.state+rgb.pd_ee_delta_pose.physx_cpu.h5"
+        OUT_DIR = "~/workspace/modemv2/demonstrations/ms-PickCube-v1-teleop"
     else:
-        H5_PATH = "/home/j/.maniskill/demos/PickCube-v1/motionplanning/trajectory.state+rgb+depth.pd_ee_delta_pose.physx_cpu.h5" if args.depth else "/home/j/.maniskill/demos/PickCube-v1/motionplanning/trajectory.state+rgb.pd_ee_delta_pose.physx_cpu.h5"
-        OUT_DIR = "/home/j/workspace/modemv2/demonstrations/ms-PickCube-v1"
+        H5_PATH = "~/.maniskill/demos/PickCube-v1/motionplanning/trajectory.state+rgb+depth.pd_ee_delta_pose.physx_cpu.h5" if args.depth else "~/.maniskill/demos/PickCube-v1/motionplanning/trajectory.state+rgb.pd_ee_delta_pose.physx_cpu.h5"
+        OUT_DIR = "~/workspace/modemv2/demonstrations/ms-PickCube-v1"
+
+    import os
+    H5_PATH = os.path.expanduser(H5_PATH)
+    OUT_DIR = os.path.expanduser(OUT_DIR)
+
     convert_ms_to_modemv2(H5_PATH, OUT_DIR, two_cameras=args.two_cameras, depth=args.depth)
