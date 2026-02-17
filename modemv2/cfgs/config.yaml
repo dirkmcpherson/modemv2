@@ -78,6 +78,7 @@ plan_policy: false
 bc_rollout: false
 bc_q_pol: false
 dense_reward: True
+use_depth: true
 gt_rollout: false
 num_cpu: 8
 left_crops: ???

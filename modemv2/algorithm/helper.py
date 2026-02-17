@@ -325,7 +325,7 @@ def trace2episodes(cfg, env, trace, exclude_fails=False, is_demo=False):
                 tc = cfg.top_crops[i]
                 rgb_imgs = pdata[rgb_key][:].transpose(0,3,1,2)
                 rgb_imgs = rgb_imgs[:cfg.episode_length+1,:,tc:tc+cfg.img_size,lc:lc+cfg.img_size]
-                if d_key in pdata:
+                if getattr(cfg, 'use_depth', True) and d_key in pdata:
                     depth_imgs = pdata[d_key][:]
                     depth_imgs = depth_imgs[:cfg.episode_length+1,:,tc:tc+cfg.img_size,lc:lc+cfg.img_size]
                     views.append(np.concatenate([rgb_imgs, depth_imgs], axis=1))

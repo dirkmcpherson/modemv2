@@ -1,10 +1,9 @@
-iterations: 1
+iterations: 4
 episode_length: 50
 img_size: 128
-lr: 3e-4
-batch_size: 256
-mix_schedule: "linear(0.0,1.0,5000,105000)"
-demo_schedule: ${mix_schedule}
+lr: 1e-3
+batch_size: 512
+demo_schedule: linear(0.75, 0.25, 50000)
 camera_views: [base_camera, hand_camera]
 left_crops: [0, 0]
 top_crops: [0, 0]
@@ -16,3 +15,4 @@ success_thresh: 0.0
 success_uv: [0,0.55]
 eval_freq: 2500
 dense_reward: true
+

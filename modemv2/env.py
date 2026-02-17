@@ -90,7 +90,8 @@ def make_env(cfg):
 
         env = make_franka_env(cfg)
     elif domain == 'ms': # Maniskill
-        c = 4 * getattr(cfg, "frame_stack", 1)  # RGBD, matching franka convention
+        channels_per_frame = 4 if getattr(cfg, "use_depth", True) else 3
+        c = channels_per_frame * getattr(cfg, "frame_stack", 1)
         h = getattr(cfg, "img_size", 128)
         w = h
         

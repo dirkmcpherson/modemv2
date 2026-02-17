@@ -11,7 +11,8 @@ class ManiSkillEnvAdapter:
         """
         self.B = int(expected_B)
         self.C_stacked, self.H, self.W = map(int, expected_tail)
-        self.C = 4  # channels per frame per camera (RGB + Depth), matching franka convention
+        self.use_depth = getattr(cfg, "use_depth", True)
+        self.C = 4 if self.use_depth else 3  # RGBD or RGB per frame per camera
 
         from collections import deque
         self._num_frames = cfg.get("frame_stack", 1)
@@ -218,9 +219,9 @@ class ManiSkillEnvAdapter:
         return out
 
     def _extract_obs_image(self, obs):
-        """Extract RGBD from all configured cameras.
-        Returns (num_cameras, 4, H, W) — RGB as uint8, Depth as raw float32.
-        np.concatenate upcasts to float32, matching franka sim convention.
+        """Extract RGB or RGBD from all configured cameras.
+        Returns (num_cameras, C, H, W) — C is 3 (RGB) or 4 (RGBD) based on use_depth.
+        When depth is included, np.concatenate upcasts to float32 (matching franka sim).
         """
         import torch.nn.functional as F
 
@@ -249,6 +250,10 @@ class ManiSkillEnvAdapter:
                 t_out = F.interpolate(t_in, size=(self.H, self.W), mode='bilinear', align_corners=False)
                 rgb = t_out.squeeze(0).clamp(0, 255).byte().numpy()
 
+            if not self.use_depth:
+                views.append(rgb)
+                continue
+
             # --- Depth (raw float, matching franka sim convention) ---
             depth = self._to_cpu_numpy(cam["depth"]).astype(np.float32)
             if depth.ndim == 4:
@@ -268,7 +273,7 @@ class ManiSkillEnvAdapter:
             rgbd = np.concatenate([rgb, depth], axis=0)  # (4, H, W)
             views.append(rgbd)
 
-        return np.stack(views, axis=0)  # (num_cameras, 4, H, W)
+        return np.stack(views, axis=0)  # (num_cameras, C, H, W)
 
     def _to_cpu_numpy(self, x):
         if torch.is_tensor(x):
