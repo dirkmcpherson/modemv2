@@ -254,22 +254,24 @@ class ManiSkillEnvAdapter:
                 views.append(rgb)
                 continue
 
-            # --- Depth (raw float, matching franka sim convention) ---
+            # --- Depth: scale meters to [0, 255] to match franka convention ---
+            # Robohive scales MuJoCo [0,1] depth by 255. ManiSkill depth is in meters.
+            # Scale: 1m = 100, clip to [0, 255] (max ~2.55m), matching franka's [0, 255] range.
             depth = self._to_cpu_numpy(cam["depth"]).astype(np.float32)
             if depth.ndim == 4:
                 depth = depth[0]  # (H, W, 1)
             if depth.ndim == 3 and depth.shape[-1] == 1:
                 depth = depth[:, :, 0]  # (H, W)
             depth = np.nan_to_num(depth, nan=0.0, posinf=0.0, neginf=0.0)
+            depth = np.clip(depth * 100.0, 0, 255).astype(np.uint8)
             depth = depth[np.newaxis, :, :]  # (1, H, W)
 
             # Resize depth if needed
             if (depth.shape[1], depth.shape[2]) != (self.H, self.W):
-                t_in = torch.as_tensor(depth).unsqueeze(0)
+                t_in = torch.as_tensor(depth).float().unsqueeze(0)
                 t_out = F.interpolate(t_in, size=(self.H, self.W), mode='bilinear', align_corners=False)
-                depth = t_out.squeeze(0).numpy()
+                depth = t_out.squeeze(0).clamp(0, 255).byte().numpy()
 
-            # Concatenate: upcasts RGB uint8 to float32 (same as franka sim)
             rgbd = np.concatenate([rgb, depth], axis=0)  # (4, H, W)
             views.append(rgbd)
 

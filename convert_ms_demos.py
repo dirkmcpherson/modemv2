@@ -84,10 +84,13 @@ def convert_ms_to_modemv2(h5_path, output_dir, two_cameras=False, depth=False):
             }
 
             if depth:
-                # ManiSkill depth: (N, H, W, 1) float16/32 → store as (N, 1, H, W) float32
+                # ManiSkill depth: (N, H, W, 1) float16/32, values in meters.
+                # Scale to [0, 255] to match robohive/franka convention (robohive does 255*depth).
+                # 1m = 100, max ~2.55m → 255. Store as (N, 1, H, W) uint8.
                 base_depth = traj["obs/sensor_data/base_camera/depth"][:].astype(np.float32)
                 if base_depth.ndim == 4 and base_depth.shape[-1] == 1:
                     base_depth = base_depth.transpose(0, 3, 1, 2)  # (N, 1, H, W)
+                base_depth = np.clip(base_depth * 100.0, 0, 255).astype(np.uint8)
                 trial_data["env_infos/visual_dict/d:base_camera:128x128:2d"] = base_depth
 
             if two_cameras:
@@ -97,6 +100,7 @@ def convert_ms_to_modemv2(h5_path, output_dir, two_cameras=False, depth=False):
                     hand_depth = traj["obs/sensor_data/hand_camera/depth"][:].astype(np.float32)
                     if hand_depth.ndim == 4 and hand_depth.shape[-1] == 1:
                         hand_depth = hand_depth.transpose(0, 3, 1, 2)
+                    hand_depth = np.clip(hand_depth * 100.0, 0, 255).astype(np.uint8)
                     trial_data["env_infos/visual_dict/d:hand_camera:128x128:2d"] = hand_depth
 
             full_data = {
