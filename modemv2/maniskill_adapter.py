@@ -263,7 +263,8 @@ class ManiSkillEnvAdapter:
             if depth.ndim == 3 and depth.shape[-1] == 1:
                 depth = depth[:, :, 0]  # (H, W)
             depth = np.nan_to_num(depth, nan=0.0, posinf=0.0, neginf=0.0)
-            depth = np.clip(depth * 100.0, 0, 255).astype(np.uint8)
+            # ManiSkill 3 depth is int16 millimeters. Normalize: 2000mm (2m) → 255.
+            depth = np.clip(depth / 2000.0 * 255.0, 0, 255).astype(np.uint8)
             depth = depth[np.newaxis, :, :]  # (1, H, W)
 
             # Resize depth if needed

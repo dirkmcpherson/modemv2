@@ -90,7 +90,8 @@ def convert_ms_to_modemv2(h5_path, output_dir, two_cameras=False, depth=False):
                 base_depth = traj["obs/sensor_data/base_camera/depth"][:].astype(np.float32)
                 if base_depth.ndim == 4 and base_depth.shape[-1] == 1:
                     base_depth = base_depth.transpose(0, 3, 1, 2)  # (N, 1, H, W)
-                base_depth = np.clip(base_depth * 100.0, 0, 255).astype(np.uint8)
+                # ManiSkill 3 depth is int16 millimeters. Normalize: 2000mm (2m) → 255.
+                base_depth = np.clip(base_depth / 2000.0 * 255.0, 0, 255).astype(np.uint8)
                 trial_data["env_infos/visual_dict/d:base_camera:128x128:2d"] = base_depth
 
             if two_cameras:
@@ -100,7 +101,7 @@ def convert_ms_to_modemv2(h5_path, output_dir, two_cameras=False, depth=False):
                     hand_depth = traj["obs/sensor_data/hand_camera/depth"][:].astype(np.float32)
                     if hand_depth.ndim == 4 and hand_depth.shape[-1] == 1:
                         hand_depth = hand_depth.transpose(0, 3, 1, 2)
-                    hand_depth = np.clip(hand_depth * 100.0, 0, 255).astype(np.uint8)
+                    hand_depth = np.clip(hand_depth / 2000.0 * 255.0, 0, 255).astype(np.uint8)
                     trial_data["env_infos/visual_dict/d:hand_camera:128x128:2d"] = hand_depth
 
             full_data = {
